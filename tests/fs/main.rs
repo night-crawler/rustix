@@ -8,6 +8,7 @@
 
 mod cwd;
 mod dir;
+mod borrowed_dir;
 mod fcntl;
 mod file;
 #[cfg(not(target_os = "wasi"))]

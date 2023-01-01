@@ -111,7 +111,7 @@ pub use copy_file_range::copy_file_range;
 #[cfg(not(target_os = "redox"))]
 pub use cwd::cwd;
 #[cfg(not(target_os = "redox"))]
-pub use dir::{Dir, DirEntry};
+pub use dir::{Dir, DirEntry, BorrowedDir};
 #[cfg(not(any(
     target_os = "dragonfly",
     target_os = "haiku",

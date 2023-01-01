@@ -1,42 +1,32 @@
-use crate::fd::{AsFd, BorrowedFd, OwnedFd};
-use crate::ffi::{CStr, CString};
-use crate::fs::{
-    fcntl_getfl, fstat, fstatfs, fstatvfs, openat, FileType, Mode, OFlags, Stat, StatFs, StatVfs,
-};
-use crate::io;
-use crate::process::fchdir;
-use crate::utils::as_ptr;
 use alloc::borrow::ToOwned;
 use alloc::vec::Vec;
 use core::fmt;
 use core::mem::size_of;
 use linux_raw_sys::general::{linux_dirent64, SEEK_SET};
 
+use crate::fd::BorrowedFd;
+use crate::ffi::CStr;
+use crate::fs::{fstat, fstatfs, fstatvfs, DirEntry, Stat, StatFs, StatVfs};
+use crate::io;
+use crate::process::fchdir;
+use crate::utils::as_ptr;
+
 /// `DIR*`
-pub struct Dir {
-    /// The `OwnedFd` that we read directory entries from.
-    fd: OwnedFd,
+pub struct BorrowedDir<'fd> {
+    fd: BorrowedFd<'fd>,
 
     buf: Vec<u8>,
     pos: usize,
     next: Option<u64>,
 }
 
-impl Dir {
+impl<'fd> BorrowedDir<'fd> {
     /// Construct a `Dir` that reads entries from the given directory
     /// file descriptor.
     #[inline]
-    pub fn read_from<Fd: AsFd>(fd: Fd) -> io::Result<Self> {
-        Self::_read_from(fd.as_fd())
-    }
-
-    #[inline]
-    fn _read_from(fd: BorrowedFd<'_>) -> io::Result<Self> {
-        let flags = fcntl_getfl(fd)?;
-        let fd_for_dir = openat(fd, cstr!("."), flags | OFlags::CLOEXEC, Mode::empty())?;
-
+    pub fn from_borrowed_fd(fd: BorrowedFd<'fd>) -> io::Result<Self> {
         Ok(Self {
-            fd: fd_for_dir,
+            fd,
             buf: Vec::new(),
             pos: 0,
             next: None,
@@ -53,7 +43,7 @@ impl Dir {
     /// `readdir(self)`, where `None` means the end of the directory.
     pub fn read(&mut self) -> Option<io::Result<DirEntry>> {
         if let Some(next) = self.next.take() {
-            match crate::backend::fs::syscalls::_seek(self.fd.as_fd(), next as i64, SEEK_SET) {
+            match crate::backend::fs::syscalls::_seek(self.fd, next as i64, SEEK_SET) {
                 Ok(_) => (),
                 Err(err) => return Some(Err(err)),
             }
@@ -140,7 +130,7 @@ impl Dir {
         // Capacity increment currently chosen by wild guess.
         self.buf
             .resize(self.buf.capacity() + 32 * size_of::<linux_dirent64>(), 0);
-        let nread = match crate::backend::fs::syscalls::getdents(self.fd.as_fd(), &mut self.buf) {
+        let nread = match crate::backend::fs::syscalls::getdents(self.fd, &mut self.buf) {
             Ok(nread) => nread,
             Err(err) => {
                 self.buf.resize(og_len, 0);
@@ -181,7 +171,7 @@ impl Dir {
     }
 }
 
-impl Iterator for Dir {
+impl<'fd> Iterator for BorrowedDir<'fd> {
     type Item = io::Result<DirEntry>;
 
     #[inline]
@@ -190,36 +180,8 @@ impl Iterator for Dir {
     }
 }
 
-impl fmt::Debug for Dir {
+impl<'fd> fmt::Debug for BorrowedDir<'fd> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Dir").field("fd", &self.fd).finish()
-    }
-}
-
-/// `struct dirent`
-#[derive(Debug)]
-pub struct DirEntry {
-    pub(crate) d_ino: u64,
-    pub(crate) d_type: u8,
-    pub(crate) name: CString,
-}
-
-impl DirEntry {
-    /// Returns the file name of this directory entry.
-    #[inline]
-    pub fn file_name(&self) -> &CStr {
-        &self.name
-    }
-
-    /// Returns the type of this directory entry.
-    #[inline]
-    pub fn file_type(&self) -> FileType {
-        FileType::from_dirent_d_type(self.d_type)
-    }
-
-    /// Return the inode number of this directory entry.
-    #[inline]
-    pub fn ino(&self) -> u64 {
-        self.d_ino
     }
 }
